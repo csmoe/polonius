@@ -39,25 +39,25 @@ pub(super) fn compute(dump_enabled: bool, mut all_facts: AllFacts) -> Output {
 
     let subset_start = Instant::now();
 
+    let mut iteration = Iteration::new();
+    let region_live_at = iteration.variable::<((Region, Point), ())>("region_live_at");
+    let cfg_edge_p = iteration.variable::<(Point, Point)>("cfg_edge_p");
+
     // compute the subsets rules, but indexed ((Region, Point), Region) for the next iteration
     let subset = {
         // Create a new iteration context, ...
-        let mut iteration1 = Iteration::new();
 
         // .. some variables, ..
-        let subset = iteration1.variable::<(Region, Region, Point)>("subset");
+        let subset = iteration.variable::<(Region, Region, Point)>("subset");
 
         // different indices for `subset`.
-        let subset_r1p = iteration1.variable::<((Region, Point), Region)>("subset_r1p");
-        let subset_r2p = iteration1.variable::<((Region, Point), Region)>("subset_r2p");
-        let subset_p = iteration1.variable::<(Point, (Region, Region))>("subset_p");
+        let subset_r1p = iteration.variable::<((Region, Point), Region)>("subset_r1p");
+        let subset_r2p = iteration.variable::<((Region, Point), Region)>("subset_r2p");
+        let subset_p = iteration.variable::<(Point, (Region, Region))>("subset_p");
 
         // temporaries as we perform a multi-way join.
-        let subset_1 = iteration1.variable::<((Region, Point), Region)>("subset_1");
-        let subset_2 = iteration1.variable::<((Region, Point), Region)>("subset_2");
-
-        let region_live_at = iteration1.variable::<((Region, Point), ())>("region_live_at"); // redundantly computed index
-        let cfg_edge_p = iteration1.variable::<(Point, Point)>("cfg_edge_p"); // redundantly computed index
+        let subset_1 = iteration.variable::<((Region, Point), Region)>("subset_1");
+        let subset_2 = iteration.variable::<((Region, Point), Region)>("subset_2");
 
         // load initial facts.
         subset.insert(all_facts.outlives.into());
@@ -67,7 +67,7 @@ pub(super) fn compute(dump_enabled: bool, mut all_facts: AllFacts) -> Output {
         cfg_edge_p.insert(all_facts.cfg_edge.clone().into());
 
         // .. and then start iterating rules!
-        while iteration1.changed() {
+        while iteration.changed() {
             // remap fields to re-index by keys.
             subset_r1p.from_map(&subset, |&(r1, r2, p)| ((r1, p), r2));
             subset_r2p.from_map(&subset, |&(r1, r2, p)| ((r2, p), r1));
@@ -120,27 +120,22 @@ pub(super) fn compute(dump_enabled: bool, mut all_facts: AllFacts) -> Output {
 
     // compute the requires rules, but indexed ((Region, Point), Loan) for the next iteration
     let requires = {
-        // Create a new iteration context, ...
-        let mut iteration2 = Iteration::new();
-
         // .. some variables, ..
-        let requires = iteration2.variable::<(Region, Loan, Point)>("requires");
+        let requires = iteration.variable::<(Region, Loan, Point)>("requires");
         requires.insert(all_facts.borrow_region.into());
 
         // some indexes
-        let requires_rp = iteration2.variable::<((Region, Point), Loan)>("requires_rp");
-        let requires_bp = iteration2.variable::<((Loan, Point), Region)>("requires_bp");
+        let requires_rp = iteration.variable::<((Region, Point), Loan)>("requires_rp");
+        let requires_bp = iteration.variable::<((Loan, Point), Region)>("requires_bp");
 
-        let requires_1 = iteration2.variable::<(Point, (Loan, Region))>("requires_1");
-        let requires_2 = iteration2.variable::<((Region, Point), Loan)>("requires_2");
+        let requires_1 = iteration.variable::<(Point, (Loan, Region))>("requires_1");
+        let requires_2 = iteration.variable::<((Region, Point), Loan)>("requires_2");
 
         // since we're using subset mapped ((r, p), r) we can use it directly out of iteration 1
-        let subset_r1p = iteration2.variable::<((Region, Point), Region)>("subset_r1p");
+        let subset_r1p = iteration.variable::<((Region, Point), Region)>("subset_r1p");
         subset_r1p.insert(subset);
 
         let killed = all_facts.killed.into();
-        let region_live_at = iteration2.variable::<((Region, Point), ())>("region_live_at"); // redundantly computed index
-        let cfg_edge_p = iteration2.variable::<(Point, Point)>("cfg_edge_p"); // redundantly computed index
 
         // load initial facts.
         region_live_at.insert(Relation::from(
@@ -149,7 +144,7 @@ pub(super) fn compute(dump_enabled: bool, mut all_facts: AllFacts) -> Output {
         cfg_edge_p.insert(all_facts.cfg_edge.into());
 
         // .. and then start iterating rules!
-        while iteration2.changed() {
+        while iteration.changed() {
             requires_rp.from_map(&requires, |&(r, b, p)| ((r, p), b));
             requires_bp.from_map(&requires, |&(r, b, p)| ((b, p), r));
 
@@ -195,24 +190,20 @@ pub(super) fn compute(dump_enabled: bool, mut all_facts: AllFacts) -> Output {
     let borrow_live_at_start = Instant::now();
 
     let borrow_live_at = {
-        // Create a new iteration context, ...
-        let mut iteration3 = Iteration::new();
-
         // .. some variables, ..
-        let borrow_live_at = iteration3.variable::<(Loan, Point)>("borrow_live_at");
+        let borrow_live_at = iteration.variable::<(Loan, Point)>("borrow_live_at");
 
         // since we're using requires mapped ((r, p), b) we can use it directly out of iteration 2
-        let requires_rp = iteration3.variable::<((Region, Point), Loan)>("requires_rp");
+        let requires_rp = iteration.variable::<((Region, Point), Loan)>("requires_rp");
         requires_rp.insert(requires.into());
 
-        let region_live_at = iteration3.variable::<((Region, Point), ())>("region_live_at"); // redundantly computed index
 
         // load initial facts.
         region_live_at.insert(Relation::from(
             all_facts.region_live_at.iter().map(|&(r, p)| ((r, p), ())),
         ));
 
-        while iteration3.changed() {
+        while iteration.changed() {
             // borrow_live_at(B, P) :- requires(R, B, P), region_live_at(R, P)
             borrow_live_at.from_join(&requires_rp, &region_live_at, |&(_r, p), &b, &()| (b, p));
         }
